@@ -1,1 +1,39 @@
-snapshots.json
+# Python
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+*.pyo
+backend/venv/
+backend/.venv/
+backend/env/
+*.egg-info/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Local data — never commit your actual snapshot database
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Environment / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
