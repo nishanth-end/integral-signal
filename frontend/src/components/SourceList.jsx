@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function SourceList({
   article,
@@ -7,13 +8,18 @@ export default function SourceList({
   onSelectSource,
   onSourceAdded,
   onSourceUnlinked,
+  onDeleteSource,
   isLoading,
   apiBaseUrl
 }) {
   const [newUrl, setNewUrl] = useState('');
   const [adding, setAdding] = useState(false);
-  const [unlinkingId, setUnlinkingId] = useState(null);
+  const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState(null);
+
+  // Source deletion state & dialog
+  const [deletingSource, setDeletingSource] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleAddSource = async (e) => {
     e.preventDefault();
@@ -49,14 +55,12 @@ export default function SourceList({
     }
   };
 
+  // Non-destructive: fires immediately without confirmation prompt
   const handleUnlink = async (e, src) => {
-    e.stopPropagation(); // prevent selecting source
+    e.stopPropagation();
     if (!article) return;
 
-    const confirmed = window.confirm(`Unlink "${src.url}" from "${article.title}"?\n\n(Note: This will not delete the source or its snapshot history from other articles)`);
-    if (!confirmed) return;
-
-    setUnlinkingId(src.id);
+    setBusyId(src.id);
     setError(null);
 
     try {
@@ -74,7 +78,40 @@ export default function SourceList({
     } catch (err) {
       setError(err.message);
     } finally {
-      setUnlinkingId(null);
+      setBusyId(null);
+    }
+  };
+
+  const promptDeleteSource = (e, src) => {
+    e.stopPropagation();
+    setDeletingSource(src);
+  };
+
+  const confirmDeleteSource = async () => {
+    if (!deletingSource) return;
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      if (onDeleteSource) {
+        await onDeleteSource(deletingSource.id);
+      } else {
+        const res = await fetch(`${apiBaseUrl}/sources/${deletingSource.id}`, {
+          method: 'DELETE'
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || data.detail || `Failed to delete source (HTTP ${res.status})`);
+        }
+        if (onSourceUnlinked) {
+          await onSourceUnlinked(deletingSource.id);
+        }
+      }
+      setDeletingSource(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -109,7 +146,7 @@ export default function SourceList({
     if (!ts) return 'Never';
     try {
       const d = new Date(ts);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + d.toLocaleDateString([], { month: 'short', day: 'numeric' });
     } catch {
       return ts;
     }
@@ -117,6 +154,17 @@ export default function SourceList({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Confirm Delete Source Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingSource}
+        title="Delete Source"
+        message="Permanently delete this source and ALL its snapshot history? This cannot be undone."
+        confirmText={isDeleting ? 'Deleting...' : 'Delete Source'}
+        danger={true}
+        onConfirm={confirmDeleteSource}
+        onCancel={() => setDeletingSource(null)}
+      />
+
       {/* Header & Add Source Form */}
       <div style={{ padding: '16px', borderBottom: '1px solid #e0e0e0', background: '#fafafa' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -184,7 +232,7 @@ export default function SourceList({
             {sources.map((src) => {
               const isSelected = selectedSource && selectedSource.url === src.url;
               const badge = getStatusBadge(src.status);
-              const isUnlinking = unlinkingId === src.id;
+              const isBusy = busyId === src.id;
 
               return (
                 <div
@@ -219,27 +267,55 @@ export default function SourceList({
                       {src.url}
                     </div>
 
-                    {article && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {article && (
+                        <button
+                          title="Unlink from this article (keeps snapshot history)"
+                          onClick={(e) => handleUnlink(e, src)}
+                          disabled={isBusy}
+                          style={{
+                            background: '#f5f5f5',
+                            border: '1px solid #ddd',
+                            color: '#666',
+                            cursor: isBusy ? 'not-allowed' : 'pointer',
+                            padding: '1px 6px',
+                            fontSize: '11px',
+                            borderRadius: '3px',
+                            fontWeight: 500
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = '#d32f2f';
+                            e.currentTarget.style.borderColor = '#d32f2f';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = '#666';
+                            e.currentTarget.style.borderColor = '#ddd';
+                          }}
+                        >
+                          Unlink
+                        </button>
+                      )}
+
                       <button
-                        title="Unlink source from article"
-                        onClick={(e) => handleUnlink(e, src)}
-                        disabled={isUnlinking}
+                        title="Permanently delete source and all its snapshot history"
+                        onClick={(e) => promptDeleteSource(e, src)}
+                        disabled={isBusy}
                         style={{
                           background: 'none',
                           border: 'none',
-                          color: '#999',
-                          cursor: isUnlinking ? 'not-allowed' : 'pointer',
-                          padding: '0 2px',
-                          fontSize: '16px',
+                          color: '#bbb',
+                          cursor: isBusy ? 'not-allowed' : 'pointer',
+                          padding: '0 4px',
+                          fontSize: '14px',
                           lineHeight: '1',
                           borderRadius: '3px'
                         }}
                         onMouseEnter={(e) => e.currentTarget.style.color = '#c62828'}
-                        onMouseLeave={(e) => e.currentTarget.style.color = '#999'}
+                        onMouseLeave={(e) => e.currentTarget.style.color = '#bbb'}
                       >
-                        &times;
+                        🗑
                       </button>
-                    )}
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#666' }}>

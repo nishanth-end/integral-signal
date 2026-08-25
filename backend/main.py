@@ -44,6 +44,9 @@ class URLPayload(BaseModel):
 class ArticleCreatePayload(BaseModel):
     title: str
 
+class ArticleUpdatePayload(BaseModel):
+    title: str
+
 @app.on_event("startup")
 def on_startup():
     storage.init_db()
@@ -209,6 +212,36 @@ def unlink_article_source(article_id: int, source_id: int):
     return {
         "status": "ok",
         "message": f"Source {source_id} unlinked from article {article_id}"
+    }
+
+@app.patch("/articles/{article_id}")
+def update_article_endpoint(article_id: int, payload: ArticleUpdatePayload):
+    try:
+        updated = storage.update_article(article_id, payload.title)
+        if not updated:
+            return JSONResponse(status_code=404, content={"error": f"Article {article_id} not found"})
+        return updated
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+@app.delete("/articles/{article_id}")
+def delete_article_endpoint(article_id: int):
+    deleted = storage.delete_article(article_id)
+    if not deleted:
+        return JSONResponse(status_code=404, content={"error": f"Article {article_id} not found"})
+    return {
+        "status": "ok",
+        "message": f"Article {article_id} deleted"
+    }
+
+@app.delete("/sources/{source_id}")
+def delete_source_endpoint(source_id: int):
+    deleted = storage.delete_source(source_id)
+    if not deleted:
+        return JSONResponse(status_code=404, content={"error": f"Source {source_id} not found"})
+    return {
+        "status": "ok",
+        "message": f"Source {source_id} and all its snapshot history deleted permanently"
     }
 
 

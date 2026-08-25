@@ -118,9 +118,60 @@ class TestArticlesStorage(unittest.TestCase):
         history = storage.get_snapshot_history(url, self.db_path)
         self.assertEqual(len(history), 1)
 
+    def test_update_article(self):
+        art = storage.create_article("Initial Title", self.db_path)
+        updated = storage.update_article(art["id"], "Updated Title", self.db_path)
+        self.assertEqual(updated["title"], "Updated Title")
+        self.assertEqual(updated["id"], art["id"])
+
+        # Non-existent article returns None
+        self.assertIsNone(storage.update_article(99999, "No Exist", self.db_path))
+
+    def test_delete_article(self):
+        art = storage.create_article("Article To Delete", self.db_path)
+        url = "https://example.com/unique-source"
+        storage.save_snapshot(url, "Some content", trigger="manual", db_path=self.db_path)
+        storage.link_source_to_article(art["id"], url, self.db_path)
+
+        # Delete article
+        deleted = storage.delete_article(art["id"], self.db_path)
+        self.assertTrue(deleted)
+        self.assertIsNone(storage.get_article(art["id"], self.db_path))
+
+        # Underlying source and snapshot must remain intact (orphaned or shared)
+        all_sources = storage.get_all_sources(self.db_path)
+        self.assertTrue(any(s["url"] == url for s in all_sources))
+
+    def test_delete_source_permanent(self):
+        art1 = storage.create_article("Article A", self.db_path)
+        art2 = storage.create_article("Article B", self.db_path)
+        url = "https://example.com/delete-target"
+        storage.save_snapshot(url, "Snapshot 1", trigger="manual", db_path=self.db_path)
+        storage.save_snapshot(url, "Snapshot 2", trigger="manual", db_path=self.db_path)
+
+        link1 = storage.link_source_to_article(art1["id"], url, self.db_path)
+        storage.link_source_to_article(art2["id"], url, self.db_path)
+        source_id = link1["source_id"]
+
+        # Permanently delete source
+        deleted = storage.delete_source(source_id, self.db_path)
+        self.assertTrue(deleted)
+
+        # Source is gone from all articles
+        self.assertEqual(len(storage.get_sources_for_article(art1["id"], self.db_path)), 0)
+        self.assertEqual(len(storage.get_sources_for_article(art2["id"], self.db_path)), 0)
+
+        # Source is gone from global sources and snapshot history
+        all_sources = storage.get_all_sources(self.db_path)
+        self.assertFalse(any(s["id"] == source_id for s in all_sources))
+        self.assertEqual(len(storage.get_snapshot_history(url, self.db_path)), 0)
+
     def test_error_handling(self):
         with self.assertRaises(ValueError):
             storage.create_article("   ", self.db_path)
+
+        with self.assertRaises(ValueError):
+            storage.update_article(1, "   ", self.db_path)
 
         with self.assertRaises(ValueError):
             storage.link_source_to_article(9999, "https://example.com", self.db_path)

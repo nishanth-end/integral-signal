@@ -1,15 +1,27 @@
 import React, { useState } from 'react';
+import ConfirmDialog from './ConfirmDialog';
 
 export default function ArticleList({
   articles,
   onSelectArticle,
   onArticleCreated,
+  onRenameArticle,
+  onDeleteArticle,
   isLoading,
   apiBaseUrl
 }) {
   const [newTitle, setNewTitle] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
+
+  // Rename state
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [savingRename, setSavingRename] = useState(false);
+
+  // Delete state & dialog
+  const [deletingArticle, setDeletingArticle] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleCreateArticle = async (e) => {
     e.preventDefault();
@@ -41,6 +53,55 @@ export default function ArticleList({
     }
   };
 
+  const startRename = (e, art) => {
+    e.stopPropagation();
+    setEditingId(art.id);
+    setEditTitle(art.title);
+  };
+
+  const cancelRename = (e) => {
+    if (e) e.stopPropagation();
+    setEditingId(null);
+    setEditTitle('');
+  };
+
+  const handleSaveRename = async (e, articleId) => {
+    e.stopPropagation();
+    if (!editTitle.trim()) return;
+
+    setSavingRename(true);
+    try {
+      if (onRenameArticle) {
+        await onRenameArticle(articleId, editTitle.trim());
+      }
+      setEditingId(null);
+    } catch (err) {
+      alert(`Failed to rename article: ${err.message}`);
+    } finally {
+      setSavingRename(false);
+    }
+  };
+
+  const promptDelete = (e, art) => {
+    e.stopPropagation();
+    setDeletingArticle(art);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingArticle) return;
+    setIsDeleting(true);
+    try {
+      if (onDeleteArticle) {
+        await onDeleteArticle(deletingArticle.id);
+      }
+      setDeletingArticle(null);
+    } catch (err) {
+      alert(`Failed to delete article: ${err.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const formatDate = (ts) => {
     if (!ts) return 'Unknown date';
     try {
@@ -57,6 +118,17 @@ export default function ArticleList({
 
   return (
     <div style={{ padding: '32px 40px', maxWidth: '1000px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      {/* Confirm Delete Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingArticle}
+        title="Delete Article"
+        message="Delete this article? Sources will remain but won't be linked to any article."
+        confirmText={isDeleting ? 'Deleting...' : 'Delete Article'}
+        danger={true}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeletingArticle(null)}
+      />
+
       {/* Top Banner */}
       <div style={{ marginBottom: '28px' }}>
         <h2 style={{ margin: '0 0 6px 0', fontSize: '24px', fontWeight: 700, color: '#111' }}>
@@ -159,54 +231,158 @@ export default function ArticleList({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))',
               gap: '16px'
             }}
           >
             {articles.map((art) => {
               const count = art.source_count || 0;
+              const isEditing = editingId === art.id;
+
               return (
                 <div
                   key={art.id}
                   id={`article-card-${art.id}`}
-                  onClick={() => onSelectArticle(art)}
+                  onClick={() => !isEditing && onSelectArticle(art)}
                   style={{
                     background: '#ffffff',
                     border: '1px solid #e0e0e0',
                     borderRadius: '8px',
                     padding: '18px 20px',
-                    cursor: 'pointer',
+                    cursor: isEditing ? 'default' : 'pointer',
                     boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
                     transition: 'all 0.15s ease',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: '110px'
+                    minHeight: '120px'
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = '#1976d2';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                    e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.06)';
+                    if (!isEditing) {
+                      e.currentTarget.style.borderColor = '#1976d2';
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                      e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.06)';
+                    }
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = '#e0e0e0';
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.03)';
+                    if (!isEditing) {
+                      e.currentTarget.style.borderColor = '#e0e0e0';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.03)';
+                    }
                   }}
                 >
                   <div>
-                    <h4
-                      style={{
-                        margin: '0 0 8px 0',
-                        fontSize: '16px',
-                        fontWeight: 600,
-                        color: '#1a237e',
-                        lineHeight: '1.4',
-                        wordBreak: 'break-word'
-                      }}
-                    >
-                      {art.title}
-                    </h4>
+                    {isEditing ? (
+                      <div onClick={(e) => e.stopPropagation()} style={{ marginBottom: '8px' }}>
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          autoFocus
+                          disabled={savingRename}
+                          style={{
+                            width: '100%',
+                            padding: '6px 8px',
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            border: '1px solid #1976d2',
+                            borderRadius: '4px',
+                            marginBottom: '6px',
+                            boxSizing: 'border-box'
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            onClick={(e) => handleSaveRename(e, art.id)}
+                            disabled={savingRename || !editTitle.trim()}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              background: '#1976d2',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: savingRename || !editTitle.trim() ? 'not-allowed' : 'pointer'
+                            }}
+                          >
+                            {savingRename ? 'Saving...' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelRename}
+                            disabled={savingRename}
+                            style={{
+                              padding: '4px 10px',
+                              fontSize: '12px',
+                              background: '#f0f0f0',
+                              color: '#555',
+                              border: '1px solid #ccc',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                        <h4
+                          style={{
+                            margin: '0 0 8px 0',
+                            fontSize: '16px',
+                            fontWeight: 600,
+                            color: '#1a237e',
+                            lineHeight: '1.4',
+                            wordBreak: 'break-word',
+                            flex: 1
+                          }}
+                        >
+                          {art.title}
+                        </h4>
+
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button
+                            title="Rename article"
+                            onClick={(e) => startRename(e, art)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#777',
+                              cursor: 'pointer',
+                              padding: '2px 5px',
+                              fontSize: '12px',
+                              borderRadius: '3px'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#1976d2'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#777'}
+                          >
+                            Rename
+                          </button>
+
+                          <button
+                            title="Delete article"
+                            onClick={(e) => promptDelete(e, art)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#999',
+                              cursor: 'pointer',
+                              padding: '2px 5px',
+                              fontSize: '12px',
+                              borderRadius: '3px'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#c62828'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#999'}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div

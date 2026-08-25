@@ -414,4 +414,39 @@ def unlink_source_from_article(article_id: int, source_id: int, db_path: Optiona
         conn.commit()
         return cursor.rowcount > 0
 
+def update_article(article_id: int, title: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    clean_title = title.strip()
+    if not clean_title:
+        raise ValueError("Article title cannot be empty")
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE articles SET title = ? WHERE id = ?",
+            (clean_title, article_id)
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return None
+
+    return get_article(article_id, db_path)
+
+def delete_article(article_id: int, db_path: Optional[str] = None) -> bool:
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        # With PRAGMA foreign_keys = ON, deleting from articles cascades to article_sources,
+        # but leaves sources and snapshots intact.
+        cursor.execute("DELETE FROM articles WHERE id = ?", (article_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def delete_source(source_id: int, db_path: Optional[str] = None) -> bool:
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        # With PRAGMA foreign_keys = ON, deleting from sources cascades to snapshots and article_sources.
+        cursor.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
 

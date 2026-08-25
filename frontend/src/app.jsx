@@ -14,6 +14,10 @@ export default function App() {
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [loadingArticles, setLoadingArticles] = useState(false);
 
+  // Rename modal / inline state for active article header
+  const [isEditingHeaderTitle, setIsEditingHeaderTitle] = useState(false);
+  const [headerTitleDraft, setHeaderTitleDraft] = useState('');
+
   // Sources state (scoped to selectedArticle)
   const [sources, setSources] = useState([]);
   const [selectedSource, setSelectedSource] = useState(null);
@@ -37,6 +41,7 @@ export default function App() {
     return false;
   };
 
+  // Fixed: fetchArticles uses functional state update to avoid stale closure snap-backs
   const fetchArticles = useCallback(async (selectArticleId = null) => {
     setLoadingArticles(true);
     try {
@@ -48,9 +53,12 @@ export default function App() {
         if (selectArticleId) {
           const found = data.articles.find(a => a.id === selectArticleId);
           if (found) setSelectedArticle(found);
-        } else if (selectedArticle) {
-          const current = data.articles.find(a => a.id === selectedArticle.id);
-          if (current) setSelectedArticle(current);
+        } else {
+          // If an article is already open, sync its updated title/counts; if null, keep null!
+          setSelectedArticle(prev => {
+            if (!prev) return null;
+            return data.articles.find(a => a.id === prev.id) || null;
+          });
         }
       }
     } catch (err) {
@@ -58,7 +66,7 @@ export default function App() {
     } finally {
       setLoadingArticles(false);
     }
-  }, [selectedArticle]);
+  }, []);
 
   const fetchSources = useCallback(async (selectUrl = null, articleToFetch = selectedArticle) => {
     if (!articleToFetch) {
@@ -122,7 +130,7 @@ export default function App() {
       isMounted = false;
       if (intervalId) clearInterval(intervalId);
     };
-  }, []);
+  }, [fetchArticles]);
 
   // Fetch sources whenever selectedArticle changes
   useEffect(() => {
@@ -140,9 +148,64 @@ export default function App() {
   };
 
   const handleBackToArticles = () => {
+    setIsEditingHeaderTitle(false);
     setSelectedArticle(null);
     setSelectedSource(null);
     fetchArticles();
+  };
+
+  const handleRenameArticle = async (articleId, newTitle) => {
+    const res = await fetch(`${SIDECAR_URL}/articles/${articleId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || data.detail || 'Failed to rename article');
+    }
+    await fetchArticles();
+    return data;
+  };
+
+  const handleDeleteArticle = async (articleId) => {
+    const res = await fetch(`${SIDECAR_URL}/articles/${articleId}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || data.detail || 'Failed to delete article');
+    }
+    if (selectedArticle?.id === articleId) {
+      setSelectedArticle(null);
+      setSelectedSource(null);
+    }
+    await fetchArticles();
+  };
+
+  const handleDeleteSource = async (sourceId) => {
+    const res = await fetch(`${SIDECAR_URL}/sources/${sourceId}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || data.detail || 'Failed to permanently delete source');
+    }
+    if (selectedSource?.id === sourceId) {
+      setSelectedSource(null);
+    }
+    await fetchSources();
+    await fetchArticles();
+  };
+
+  const saveHeaderTitle = async () => {
+    if (!headerTitleDraft.trim() || !selectedArticle) return;
+    try {
+      await handleRenameArticle(selectedArticle.id, headerTitleDraft.trim());
+      setIsEditingHeaderTitle(false);
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (
@@ -170,7 +233,7 @@ export default function App() {
               color: '#111',
               cursor: 'pointer'
             }}
-            title="Go to Articles"
+            title="Go to Articles list"
           >
             Integral Signal
           </h1>
@@ -184,7 +247,7 @@ export default function App() {
                   background: '#f0f0f0',
                   border: '1px solid #d0d0d0',
                   borderRadius: '4px',
-                  padding: '3px 8px',
+                  padding: '4px 9px',
                   fontSize: '12px',
                   fontWeight: 600,
                   color: '#444',
@@ -194,23 +257,95 @@ export default function App() {
                 &larr; All Articles
               </button>
               <span style={{ color: '#aaa', fontSize: '14px' }}>/</span>
-              <span
-                style={{
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  background: '#e3f2fd',
-                  color: '#1565c0',
-                  padding: '3px 10px',
-                  borderRadius: '12px',
-                  maxWidth: '300px',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}
-                title={selectedArticle.title}
-              >
-                {selectedArticle.title}
-              </span>
+
+              {isEditingHeaderTitle ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="text"
+                    value={headerTitleDraft}
+                    onChange={(e) => setHeaderTitleDraft(e.target.value)}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') saveHeaderTitle();
+                      if (e.key === 'Escape') setIsEditingHeaderTitle(false);
+                    }}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      border: '1px solid #1976d2',
+                      borderRadius: '4px'
+                    }}
+                  />
+                  <button
+                    onClick={saveHeaderTitle}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: '11px',
+                      background: '#1976d2',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setIsEditingHeaderTitle(false)}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: '11px',
+                      background: '#eee',
+                      color: '#444',
+                      border: '1px solid #ccc',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span
+                    style={{
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      background: '#e3f2fd',
+                      color: '#1565c0',
+                      padding: '3px 10px',
+                      borderRadius: '12px',
+                      maxWidth: '300px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                    title={selectedArticle.title}
+                  >
+                    {selectedArticle.title}
+                  </span>
+                  <button
+                    title="Rename this article"
+                    onClick={() => {
+                      setHeaderTitleDraft(selectedArticle.title);
+                      setIsEditingHeaderTitle(true);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#888',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      padding: '2px 4px'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.color = '#1976d2'}
+                    onMouseLeave={(e) => e.currentTarget.style.color = '#888'}
+                  >
+                    ✏️
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <span style={{ fontSize: '12px', background: '#e0e0e0', padding: '2px 8px', borderRadius: '12px', color: '#555' }}>
@@ -243,6 +378,8 @@ export default function App() {
             onArticleCreated={async (newArt) => {
               await fetchArticles(newArt.id);
             }}
+            onRenameArticle={handleRenameArticle}
+            onDeleteArticle={handleDeleteArticle}
             isLoading={loadingArticles}
             apiBaseUrl={SIDECAR_URL}
           />
@@ -277,6 +414,7 @@ export default function App() {
                   setSelectedSource(null);
                 }
               }}
+              onDeleteSource={handleDeleteSource}
               isLoading={loadingSources}
               apiBaseUrl={SIDECAR_URL}
             />

@@ -86,5 +86,48 @@ class TestArticlesAPI(unittest.TestCase):
         finally:
             snapshot.fetch_content = orig_fetch
 
+    def test_rename_and_delete_article_endpoints(self):
+        art_res = self.client.post("/articles", json={"title": "Original Title"})
+        art_id = art_res.json()["id"]
+
+        # Rename
+        patch_res = self.client.patch(f"/articles/{art_id}", json={"title": "Renamed Title"})
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertEqual(patch_res.json()["title"], "Renamed Title")
+
+        # Rename invalid
+        patch_inv = self.client.patch(f"/articles/{art_id}", json={"title": "   "})
+        self.assertEqual(patch_inv.status_code, 400)
+
+        # Delete article
+        del_res = self.client.delete(f"/articles/{art_id}")
+        self.assertEqual(del_res.status_code, 200)
+
+        # Delete again 404
+        del_res404 = self.client.delete(f"/articles/{art_id}")
+        self.assertEqual(del_res404.status_code, 404)
+
+    def test_delete_source_endpoint(self):
+        orig_fetch = snapshot.fetch_content
+        snapshot.fetch_content = lambda url, **kwargs: "Mock content"
+        try:
+            art = self.client.post("/articles", json={"title": "Container"}).json()
+            add_res = self.client.post(f"/articles/{art['id']}/sources", json={"url": "https://delete-me.org"})
+            source_id = add_res.json()["source_id"]
+
+            # Permanently delete source
+            del_res = self.client.delete(f"/sources/{source_id}")
+            self.assertEqual(del_res.status_code, 200)
+
+            # Check article sources is empty
+            sources_res = self.client.get(f"/articles/{art['id']}/sources")
+            self.assertEqual(sources_res.json()["count"], 0)
+
+            # Delete again 404
+            del_res404 = self.client.delete(f"/sources/{source_id}")
+            self.assertEqual(del_res404.status_code, 404)
+        finally:
+            snapshot.fetch_content = orig_fetch
+
 if __name__ == "__main__":
     unittest.main()
