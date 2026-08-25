@@ -3,8 +3,29 @@ from fastapi import FastAPI, Request, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import backend.snapshot as snapshot
-import backend.storage as storage
+import sys
+import os
+import threading
+import time
+
+try:
+    import backend.snapshot as snapshot
+    import backend.storage as storage
+except ImportError:
+    import snapshot
+    import storage
+
+# Automatically exit if parent process terminates
+def _watch_parent():
+    initial_ppid = os.getppid()
+    while True:
+        time.sleep(2)
+        current_ppid = os.getppid()
+        if current_ppid != initial_ppid or current_ppid <= 1:
+            os._exit(0)
+
+_parent_watcher = threading.Thread(target=_watch_parent, daemon=True)
+_parent_watcher.start()
 
 app = FastAPI(title="Integral Signal Backend", version="0.0.1")
 
@@ -19,6 +40,9 @@ app.add_middleware(
 
 class URLPayload(BaseModel):
     url: str
+
+class ArticleCreatePayload(BaseModel):
+    title: str
 
 @app.on_event("startup")
 def on_startup():
@@ -112,6 +136,81 @@ def get_history(url: str = Query(..., description="Target source URL")):
         "count": len(history),
         "history": history
     }
+
+# --- Articles Endpoints ---
+
+@app.post("/articles")
+def create_article_endpoint(payload: ArticleCreatePayload):
+    try:
+        created = storage.create_article(payload.title)
+        return created
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+@app.get("/articles")
+def list_articles():
+    articles = storage.get_all_articles()
+    return {
+        "count": len(articles),
+        "articles": articles
+    }
+
+@app.get("/articles/{article_id}")
+def get_article_endpoint(article_id: int):
+    article = storage.get_article(article_id)
+    if not article:
+        return JSONResponse(status_code=404, content={"error": f"Article {article_id} not found"})
+    return article
+
+@app.get("/articles/{article_id}/sources")
+def get_article_sources(article_id: int):
+    try:
+        sources = storage.get_sources_for_article(article_id)
+        return {
+            "article_id": article_id,
+            "count": len(sources),
+            "sources": sources
+        }
+    except ValueError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+
+@app.post("/articles/{article_id}/sources")
+def add_article_source(article_id: int, payload: URLPayload):
+    article = storage.get_article(article_id)
+    if not article:
+        return JSONResponse(status_code=404, content={"error": f"Article {article_id} not found"})
+
+    # Fetch snapshot content and save snapshot record
+    content = snapshot.fetch_content(payload.url)
+    saved = storage.save_snapshot(payload.url, content, trigger="manual")
+    link = storage.link_source_to_article(article_id, payload.url)
+
+    return {
+        "status": "ok",
+        "article_id": article_id,
+        "source_id": saved["source_id"],
+        "url": saved["url"],
+        "snapshot_id": saved["id"],
+        "timestamp": saved["fetched_at"],
+        "content_hash": saved["content_hash"],
+        "linked_at": link["created_at"]
+    }
+
+@app.delete("/articles/{article_id}/sources/{source_id}")
+def unlink_article_source(article_id: int, source_id: int):
+    article = storage.get_article(article_id)
+    if not article:
+        return JSONResponse(status_code=404, content={"error": f"Article {article_id} not found"})
+
+    unlinked = storage.unlink_source_from_article(article_id, source_id)
+    if not unlinked:
+        return JSONResponse(status_code=404, content={"error": f"Source {source_id} is not linked to article {article_id}"})
+
+    return {
+        "status": "ok",
+        "message": f"Source {source_id} unlinked from article {article_id}"
+    }
+
 
 
 if __name__ == "__main__":

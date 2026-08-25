@@ -5,7 +5,8 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build:backend": "python3 scripts/build_backend.py",
+    "build": "npm run build:backend && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.6.0"

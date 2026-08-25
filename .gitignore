@@ -1,4 +1,5 @@
 # Python
+.venv/
 backend/__pycache__/
 backend/**/__pycache__/
 *.pyc
@@ -7,6 +8,7 @@ backend/venv/
 backend/.venv/
 backend/env/
 *.egg-info/
+build/
 
 # Node / frontend
 frontend/node_modules/
@@ -17,6 +19,7 @@ npm-debug.log*
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+src-tauri/binaries/
 
 # Local data — never commit your actual snapshot database
 data/*.db

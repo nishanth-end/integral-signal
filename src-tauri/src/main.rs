@@ -3,60 +3,62 @@
     windows_subsystem = "windows"
 )]
 
-use std::path::PathBuf;
-use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
+use tauri::api::process::{Command, CommandChild, CommandEvent};
 use tauri::{RunEvent, WindowEvent};
 
 #[allow(dead_code)]
 struct SidecarState {
-    child: Arc<Mutex<Option<Child>>>,
+    child: Arc<Mutex<Option<CommandChild>>>,
 }
 
-fn get_python_binary() -> (PathBuf, PathBuf) {
-    let mut current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if current_dir.ends_with("src-tauri") {
-        current_dir.pop();
+fn spawn_sidecar() -> Arc<Mutex<Option<CommandChild>>> {
+    println!("Starting sidecar via Tauri Command::new_sidecar...");
+
+    match Command::new_sidecar("integral-signal-backend") {
+        Ok(command) => match command.spawn() {
+            Ok((mut rx, child)) => {
+                println!("Python sidecar process spawned successfully.");
+                tauri::async_runtime::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            CommandEvent::Stdout(line) => println!("[backend stdout] {}", line),
+                            CommandEvent::Stderr(line) => eprintln!("[backend stderr] {}", line),
+                            CommandEvent::Error(err) => eprintln!("[backend error] {}", err),
+                            CommandEvent::Terminated(payload) => {
+                                println!("[backend terminated] {:?}", payload);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+                Arc::new(Mutex::new(Some(child)))
+            }
+            Err(e) => {
+                eprintln!("Failed to spawn Python sidecar: {}", e);
+                Arc::new(Mutex::new(None))
+            }
+        },
+        Err(e) => {
+            eprintln!("Failed to configure Python sidecar: {}", e);
+            Arc::new(Mutex::new(None))
+        }
     }
-
-    let venv_python = current_dir.join(".venv").join("bin").join("python3");
-    if venv_python.exists() {
-        (venv_python, current_dir)
-    } else {
-        (PathBuf::from("python3"), current_dir)
-    }
 }
 
-fn spawn_sidecar() -> (Arc<Mutex<Option<Child>>>, PathBuf) {
-    let (python_bin, work_dir) = get_python_binary();
-    println!("Starting sidecar with {:?} in {:?}", python_bin, work_dir);
-
-    let child = Command::new(&python_bin)
-        .current_dir(&work_dir)
-        .args(["-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", "8765"])
-        .spawn()
-        .map_err(|e| {
-            eprintln!("Failed to spawn Python sidecar: {}", e);
-            e
-        })
-        .ok();
-
-    (Arc::new(Mutex::new(child)), work_dir)
-}
-
-fn kill_sidecar(child_mutex: &Arc<Mutex<Option<Child>>>) {
+fn kill_sidecar(child_mutex: &Arc<Mutex<Option<CommandChild>>>) {
     if let Ok(mut lock) = child_mutex.lock() {
-        if let Some(mut child) = lock.take() {
+        if let Some(child) = lock.take() {
             println!("Terminating Python sidecar process...");
             let _ = child.kill();
-            let _ = child.wait();
             println!("Python sidecar terminated.");
         }
     }
 }
 
 fn main() {
-    let (sidecar_process, _) = spawn_sidecar();
+    let sidecar_process = spawn_sidecar();
     let sidecar_for_events = Arc::clone(&sidecar_process);
 
     let app = tauri::Builder::default()
